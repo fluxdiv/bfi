@@ -107,72 +107,200 @@ impl Include {
         vec![]
     }
 
-    fn handle_permissions(
+    fn handle_count(
         &self,
         heap: Arc<Mutex<BinaryHeap<Reverse<CmdOutput>>>>
     ) -> Vec<JoinHandle<()>> {
         let mut ret: Vec<JoinHandle<()>> = vec![];
-        if let Some(permissions) = &self.permissions {
-            // get all regardless via 1 command/thread,
-            // but only keep what the user asked for
-            if permissions.len() > 0 {
-                let heap = Arc::clone(&heap);
-                let permissions = permissions.clone();
-                ret.push(thread::spawn(move || {
-                    let out = Command::new("stat")
-                        .arg("-c")
-                        .arg("'%A|%U %u|%G %g'")
-                        .arg(TFILE)
-                        .output()
-                        .unwrap();
-                    let b = String::from_utf8(out.stdout).unwrap();
-                    let outs: Vec<&str> = b
-                        .trim()
-                        .trim_matches('\'')
-                        .split('|')
-                        .collect();
-                    println!("{:#?}", outs);
+        if let Some(counts) = &self.count {
+            if counts.len() > 0 {
+                // looping multiple times is irrelevant
+                // the longest this will ever be is 3 
+                let haslines = counts.contains(&"lines".to_string());
+                let haswords = counts.contains(&"words".to_string());
+                if counts.iter().any(|c| c.eq("lines") || c.eq("words")) {
+                    let heap = Arc::clone(&heap);
+                    ret.push(thread::spawn(move || {
+                        let out = Command::new("wc")
+                            .arg("-l").arg("-w")
+                            .arg(TFILE)
+                            .output().unwrap();
 
-                    permissions.iter().for_each(|p| {
-                        match p.as_str() {
-                            "permissions" => {
-                                let out = outs
-                                    .get(0)
-                                    .unwrap_or_else(|| &"")
-                                    .to_string();
-                                let cmdout = CmdOutput::PermissionsPermissions(out);
-                                let mut heaplock = heap.lock().unwrap();
-                                heaplock.push(Reverse(cmdout));
-                            },
-                            "owner" => {
-                                let out = outs
-                                    .get(1)
-                                    .unwrap_or_else(|| &"")
-                                    .to_string();
-                                let cmdout = CmdOutput::PermissionsOwner(out);
-                                let mut heaplock = heap.lock().unwrap();
-                                heaplock.push(Reverse(cmdout));
-                            },
-                            "group" => {
-                                let out = outs
-                                    .get(2)
-                                    .unwrap_or_else(|| &"")
-                                    .to_string();
-                                let cmdout = CmdOutput::PermissionsGroup(out);
-                                let mut heaplock = heap.lock().unwrap();
-                                heaplock.push(Reverse(cmdout));
-                            },
-                            _ => todo!()
+                        let b = String::from_utf8(out.stdout).unwrap();
+                        let outs: Vec<&str> = b
+                            .trim()
+                            .split_whitespace()
+                            .collect();
+                        println!("{:#?}", outs);
+
+                        // 0 is lines, 1 is words
+                        let lines = outs.get(0).unwrap();
+                        let words = outs.get(1).unwrap();
+                        // only take lock once depending on combination
+                        if haslines && haswords {
+                            let linesout = CmdOutput::CountLines(lines.to_string());
+                            let wordsout = CmdOutput::CountWords(words.to_string());
+                            let mut heaplock = heap.lock().unwrap();
+                            heaplock.extend(vec![Reverse(linesout), Reverse(wordsout)]);
+                        } else if haslines {
+                            let linesout = CmdOutput::CountLines(lines.to_string());
+                            let mut heaplock = heap.lock().unwrap();
+                            heaplock.push(Reverse(linesout));
+                        } else {
+                            let wordsout = CmdOutput::CountWords(words.to_string());
+                            let mut heaplock = heap.lock().unwrap();
+                            heaplock.push(Reverse(wordsout));
                         }
-                    });
-                }));
+                    }));
+                }
+
+                if counts.contains(&"blocks".to_string()) {
+                    let heap = Arc::clone(&heap);
+                    ret.push(thread::spawn(move || {
+                        let out = Command::new("stat")
+                            .arg("-c")
+                            .arg("%b")
+                            .arg(TFILE)
+                            .output().unwrap();
+                        let b = String::from_utf8(out.stdout).unwrap();
+                        let b = b.trim().to_string();
+                        let cmdout = CmdOutput::CountBlocks(b);
+                        let mut heaplock = heap.lock().unwrap();
+                        heaplock.push(Reverse(cmdout));
+                    }));
+                }
             }
         }
         ret
     }
 
+    fn handle_perms_meta_access(
+        &self,
+        heap: Arc<Mutex<BinaryHeap<Reverse<CmdOutput>>>>
+    ) -> Vec<JoinHandle<()>> {
+        let mut ret: Vec<JoinHandle<()>> = vec![];
+        let perms = self.permissions.clone().unwrap_or_default();
+        let meta = self.metadata.clone().unwrap_or_default();
+        let access = self.access.clone().unwrap_or_default();
+        let opts = perms.into_iter().chain(meta).chain(access);
+        let heap = Arc::clone(&heap);
 
+        ret.push(thread::spawn(move || {
+            let out = Command::new("stat")
+                .arg("-c")
+                .arg("'%A|%U %u|%G %g|%D|%i|%h|%x|%y|%z|%w'")
+                .arg(TFILE)
+                .output()
+                .unwrap();
+            let b = String::from_utf8(out.stdout).unwrap();
+            let outs: Vec<&str> = b
+                .trim()
+                .trim_matches('\'')
+                .split('|')
+                .collect();
+            println!("{:#?}", outs);
+
+            opts.into_iter().for_each(|p| {
+                match p.as_str() {
+                    "permissions" => {
+                        let out = outs
+                            .get(0)
+                            .unwrap_or_else(|| &"")
+                            .to_string();
+                        let cmdout = CmdOutput::PermissionsPermissions(out);
+                        let mut heaplock = heap.lock().unwrap();
+                        heaplock.push(Reverse(cmdout));
+                    },
+                    "owner" => {
+                        let out = outs
+                            .get(1)
+                            .unwrap_or_else(|| &"")
+                            .to_string();
+                        let cmdout = CmdOutput::PermissionsOwner(out);
+                        let mut heaplock = heap.lock().unwrap();
+                        heaplock.push(Reverse(cmdout));
+                    },
+                    "group" => {
+                        let out = outs
+                            .get(2)
+                            .unwrap_or_else(|| &"")
+                            .to_string();
+                        let cmdout = CmdOutput::PermissionsGroup(out);
+                        let mut heaplock = heap.lock().unwrap();
+                        heaplock.push(Reverse(cmdout));
+                    },
+                    "device" => {
+                        let out = outs
+                            .get(3)
+                            .unwrap_or_else(|| &"")
+                            .to_string();
+                        let cmdout = CmdOutput::MetaDevice(out);
+                        let mut heaplock = heap.lock().unwrap();
+                        heaplock.push(Reverse(cmdout));
+                    },
+                    "inode" => {
+                        let out = outs
+                            .get(4)
+                            .unwrap_or_else(|| &"")
+                            .to_string();
+                        let cmdout = CmdOutput::MetaInode(out);
+                        let mut heaplock = heap.lock().unwrap();
+                        heaplock.push(Reverse(cmdout));
+                    },
+                    "links" => {
+                        let out = outs
+                            .get(5)
+                            .unwrap_or_else(|| &"")
+                            .to_string();
+                        let cmdout = CmdOutput::MetaLinks(out);
+                        let mut heaplock = heap.lock().unwrap();
+                        heaplock.push(Reverse(cmdout));
+                    },
+                    "read" => {
+                        let out = outs
+                            .get(6)
+                            .unwrap_or_else(|| &"")
+                            .to_string();
+                        let cmdout = CmdOutput::AccessRead(out);
+                        let mut heaplock = heap.lock().unwrap();
+                        heaplock.push(Reverse(cmdout));
+                    },
+                    "modified" => {
+                        let out = outs
+                            .get(7)
+                            .unwrap_or_else(|| &"")
+                            .to_string();
+                        let cmdout = CmdOutput::AccessModified(out);
+                        let mut heaplock = heap.lock().unwrap();
+                        heaplock.push(Reverse(cmdout));
+                    },
+                    "changed" => {
+                        let out = outs
+                            .get(8)
+                            .unwrap_or_else(|| &"")
+                            .to_string();
+                        let cmdout = CmdOutput::AccessChanged(out);
+                        let mut heaplock = heap.lock().unwrap();
+                        heaplock.push(Reverse(cmdout));
+                    },
+                    "birth" => {
+                        let out = outs
+                            .get(9)
+                            .unwrap_or_else(|| &"")
+                            .to_string();
+                        let cmdout = CmdOutput::AccessBirth(out);
+                        let mut heaplock = heap.lock().unwrap();
+                        heaplock.push(Reverse(cmdout));
+                    },
+                    _ => todo!()
+                }
+            });
+        }));
+
+        ret
+    }
 }
+
 
 fn main() -> Result<()> {
     // /home/user/.config/bfi/config.json
@@ -196,14 +324,18 @@ fn main() -> Result<()> {
 
     let include: Include = Include::deserialize(include_inner)?;
 
-    let mut heap = Arc::new(Mutex::new(BinaryHeap::<Reverse<CmdOutput>>::new()));
+    let mut heap = Arc::new(
+        Mutex::new(BinaryHeap::<Reverse<CmdOutput>>::with_capacity(50))
+    );
 
     let mut threads: Vec<JoinHandle<()>> = vec![];
 
     threads
         .extend(include.handle_general(Arc::clone(&heap)));
     threads
-        .extend(include.handle_permissions(Arc::clone(&heap)));
+        .extend(include.handle_perms_meta_access(Arc::clone(&heap)));
+    threads
+        .extend(include.handle_count(Arc::clone(&heap)));
 
     threads.into_iter().for_each(|t| t.join().unwrap());
 
