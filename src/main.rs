@@ -13,8 +13,6 @@ use quickfig::core::{
 };
 use serde::Deserialize;
 
-const TFILE: &'static str = "/home/user/bfi/Cargo.toml";
-
 #[derive(ConfigFields)]
 enum AppConfig {
     #[keys("include")]
@@ -83,18 +81,20 @@ fn bytes_to_tb(bytes: u64) -> String {
 impl Include {
     fn handle_general(
         &self,
-        heap: Arc<Mutex<BinaryHeap<Reverse<CmdOutput>>>>
+        heap: Arc<Mutex<BinaryHeap<Reverse<CmdOutput>>>>,
+        file: &str
     ) -> Vec<JoinHandle<()>> {
         let mut threads: Vec<JoinHandle<()>> = Vec::with_capacity(2);
         if let Some(generals) = &self.general {
             generals.iter().for_each(|o| {
+                let file = file.to_string();
                 match o.as_str() {
                     "path" => {
                         let heap = Arc::clone(&heap);
                         threads.push(thread::spawn(move || {
                             let out = Command::new("readlink")
                                 .arg("-f")
-                                .arg(TFILE)
+                                .arg(file)
                                 .output();
 
                             match out {
@@ -116,7 +116,7 @@ impl Include {
                         let heap = Arc::clone(&heap);
                         threads.push(thread::spawn(move || {
                             let out = Command::new("file")
-                                .arg(TFILE)
+                                .arg(file)
                                 .output();
 
                             match out {
@@ -146,17 +146,19 @@ impl Include {
 
     fn handle_size(
         &self,
-        heap: Arc<Mutex<BinaryHeap<Reverse<CmdOutput>>>>
+        heap: Arc<Mutex<BinaryHeap<Reverse<CmdOutput>>>>,
+        file: &str
     ) -> Vec<JoinHandle<()>> {
         let mut threads: Vec<JoinHandle<()>> = Vec::with_capacity(5);
 
         if let Some(sizes) = &self.size && sizes.len() > 0 {
             let heap = Arc::clone(&heap);
             let sizes = sizes.clone();
+            let file = file.to_string();
             threads.push(thread::spawn(move || {
                 let out = Command::new("du")
                     .arg("-sb")
-                    .arg(TFILE)
+                    .arg(file)
                     .output();
 
                 if let Err(e) = out {
@@ -224,7 +226,8 @@ impl Include {
 
     fn handle_count(
         &self,
-        heap: Arc<Mutex<BinaryHeap<Reverse<CmdOutput>>>>
+        heap: Arc<Mutex<BinaryHeap<Reverse<CmdOutput>>>>,
+        file: &str
     ) -> Vec<JoinHandle<()>> {
         let mut threads: Vec<JoinHandle<()>> = Vec::with_capacity(3);
         if let Some(counts) = &self.count && counts.len() > 0 {
@@ -233,11 +236,12 @@ impl Include {
             let haslines = counts.contains(&"lines".to_string());
             let haswords = counts.contains(&"words".to_string());
             if counts.iter().any(|c| c.eq("lines") || c.eq("words")) {
+                let file = file.to_string();
                 let heap = Arc::clone(&heap);
                 threads.push(thread::spawn(move || {
                     let out = Command::new("wc")
                         .arg("-l").arg("-w")
-                        .arg(TFILE)
+                        .arg(file)
                         .output();
 
                     if let Err(e) = out {
@@ -273,6 +277,7 @@ impl Include {
             }
 
             counts.iter().for_each(|c| {
+                let file = file.to_string();
                 match c.as_str() {
                     "lines" | "words" => {}
                     "blocks" => {
@@ -281,7 +286,7 @@ impl Include {
                             let out = Command::new("stat")
                                 .arg("-c")
                                 .arg("%b")
-                                .arg(TFILE)
+                                .arg(file)
                                 .output();
                             if let Err(e) = out {
                                 eprintln!("{e}");
@@ -306,7 +311,8 @@ impl Include {
 
     fn handle_perms_meta_access(
         &self,
-        heap: Arc<Mutex<BinaryHeap<Reverse<CmdOutput>>>>
+        heap: Arc<Mutex<BinaryHeap<Reverse<CmdOutput>>>>,
+        file: &str
     ) -> Vec<JoinHandle<()>> {
         let mut threads: Vec<JoinHandle<()>> = vec![];
         let perms = self.permissions.clone().unwrap_or_default();
@@ -314,12 +320,12 @@ impl Include {
         let access = self.access.clone().unwrap_or_default();
         let opts = perms.into_iter().chain(meta).chain(access);
         let heap = Arc::clone(&heap);
-
+        let file = file.to_string();
         threads.push(thread::spawn(move || {
             let out = Command::new("stat")
                 .arg("-c")
                 .arg("'%A|%U %u|%G %g|%D|%i|%h|%x|%y|%z|%w'")
-                .arg(TFILE)
+                .arg(file)
                 .output();
             if let Err(e) = out {
                 eprintln!("{e}");
@@ -440,6 +446,9 @@ impl Include {
 
 
 fn main() -> Result<()> {
+    let fpath = std::env::args().nth(1)
+        .ok_or_else(|| anyhow!("usage: bfi file_path.rs"))?;
+
     // /home/user/.config/bfi/config.json
     let config = {
         let mut config_path = dirs::config_dir()
@@ -468,21 +477,21 @@ fn main() -> Result<()> {
     let mut threads: Vec<JoinHandle<()>> = vec![];
 
     threads
-        .extend(include.handle_general(Arc::clone(&heap)));
+        .extend(include.handle_general(Arc::clone(&heap), &fpath));
     threads
-        .extend(include.handle_perms_meta_access(Arc::clone(&heap)));
+        .extend(include.handle_perms_meta_access(Arc::clone(&heap), &fpath));
     threads
-        .extend(include.handle_count(Arc::clone(&heap)));
+        .extend(include.handle_count(Arc::clone(&heap), &fpath));
     threads
-        .extend(include.handle_size(Arc::clone(&heap)));
+        .extend(include.handle_size(Arc::clone(&heap), &fpath));
 
     threads.into_iter().for_each(|t| t.join().unwrap());
 
     let mut heap = heap.lock().unwrap();
 
-    // while let Some(v) = heap.pop() {
-    //     println!("{:?}", v.0);
-    // }
+    while let Some(v) = heap.pop() {
+        println!("{:?}", v.0);
+    }
 
     Ok(())
 }
