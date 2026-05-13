@@ -78,7 +78,7 @@ fn bytes_to_tb(bytes: u64) -> String {
 
 // shelling out to other tools here because
 // 1) they work
-// 2) they're mostly ubiquitous, with some missing cases handled
+// 2) they're mostly ubiquitous
 // 3) there isn't a benefit to the syscall route for a tool like this
 impl Include {
     fn handle_general(
