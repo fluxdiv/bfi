@@ -85,51 +85,62 @@ impl Include {
         &self,
         heap: Arc<Mutex<BinaryHeap<Reverse<CmdOutput>>>>
     ) -> Vec<JoinHandle<()>> {
+        let mut threads: Vec<JoinHandle<()>> = Vec::with_capacity(2);
         if let Some(generals) = &self.general {
-            let threads: Vec<JoinHandle<()>> = generals.iter().map(|o| {
+            generals.iter().for_each(|o| {
                 match o.as_str() {
                     "path" => {
                         let heap = Arc::clone(&heap);
-                        thread::spawn(move || {
-                            // readlink -f filename
+                        threads.push(thread::spawn(move || {
                             let out = Command::new("readlink")
                                 .arg("-f")
                                 .arg(TFILE)
-                                .output()
-                                .unwrap();
+                                .output();
 
-                            let b = String::from_utf8(out.stdout).unwrap();
-                            let cmdout = CmdOutput::GeneralPath(b.trim().to_string());
+                            match out {
+                                Err(e) => {
+                                    eprintln!("{e}");
+                                },
+                                Ok(out) => {
+                                    let b = String::from_utf8(out.stdout).unwrap();
+                                    let cmdout = CmdOutput::GeneralPath(b.trim().to_string());
 
-                            let mut heaplock = heap.lock().unwrap();
-                            heaplock.push(Reverse(cmdout));
-                        })
+                                    let mut heaplock = heap.lock().unwrap();
+                                    heaplock.push(Reverse(cmdout));
+                                },
+                            }
+
+                        }));
                     },
                     "type" => {
                         let heap = Arc::clone(&heap);
-                        thread::spawn(move || {
-                            // file file.name
+                        threads.push(thread::spawn(move || {
                             let out = Command::new("file")
                                 .arg(TFILE)
-                                .output()
-                                .unwrap();
-                            let b = String::from_utf8(out.stdout).unwrap();
-                            let cmdout = CmdOutput::GeneralType(b.trim().to_string());
+                                .output();
 
-                            let mut heaplock = heap.lock().unwrap();
-                            heaplock.push(Reverse(cmdout));
-                        })
+                            match out {
+                                Err(e) => {
+                                    eprintln!("{e}");
+                                },
+                                Ok(out) => {
+                                    let b = String::from_utf8(out.stdout).unwrap();
+                                    let cmdout = CmdOutput::GeneralType(b.trim().to_string());
+
+                                    let mut heaplock = heap.lock().unwrap();
+                                    heaplock.push(Reverse(cmdout));
+                                },
+                            }
+                        }));
                     },
                     e => {
                         eprintln!("Unrecognized option in \"general\" field: {e}");
                         eprintln!("Available options: path, type");
-                        todo!()
                     }
                 }
-            }).collect();
-            return threads;
+            });
         }
-        vec![]
+        threads
     }
 
 
@@ -137,26 +148,37 @@ impl Include {
         &self,
         heap: Arc<Mutex<BinaryHeap<Reverse<CmdOutput>>>>
     ) -> Vec<JoinHandle<()>> {
-        let mut ret: Vec<JoinHandle<()>> = vec![];
+        let mut threads: Vec<JoinHandle<()>> = Vec::with_capacity(5);
 
         if let Some(sizes) = &self.size && sizes.len() > 0 {
             let heap = Arc::clone(&heap);
             let sizes = sizes.clone();
-            ret.push(thread::spawn(move || {
+            threads.push(thread::spawn(move || {
                 let out = Command::new("du")
                     .arg("-sb")
                     .arg(TFILE)
-                    .output().unwrap();
-                let b = String::from_utf8(out.stdout).unwrap();
-                let size_bytes = b
+                    .output();
+
+                if let Err(e) = out {
+                    eprintln!("{e}");
+                    return;
+                }
+
+                let b = String::from_utf8(out.unwrap().stdout).unwrap();
+                let size_bytes_res = b
                     .split_whitespace()
                     .next()
                     .unwrap()
                     .to_string()
-                    .parse::<u64>()
-                    .unwrap();
+                    .parse::<u64>();
 
-                sizes.iter().for_each(|s| {
+                if size_bytes_res.is_err() {
+                    eprintln!("du -sb returned unparseable");
+                    return;
+                }
+                let size_bytes = size_bytes_res.unwrap();
+
+                sizes.iter().take(5).for_each(|s| {
                     match s.to_ascii_uppercase().as_str() {
                         "B" => {
                             let mut heaplock = heap.lock().unwrap();
@@ -197,100 +219,118 @@ impl Include {
             }));
         }
 
-        ret
+        threads
     }
 
     fn handle_count(
         &self,
         heap: Arc<Mutex<BinaryHeap<Reverse<CmdOutput>>>>
     ) -> Vec<JoinHandle<()>> {
-        let mut ret: Vec<JoinHandle<()>> = vec![];
-        if let Some(counts) = &self.count {
-            if counts.len() > 0 {
-                // looping multiple times is irrelevant
-                // the longest this will ever be is 3 
-                let haslines = counts.contains(&"lines".to_string());
-                let haswords = counts.contains(&"words".to_string());
-                if counts.iter().any(|c| c.eq("lines") || c.eq("words")) {
-                    let heap = Arc::clone(&heap);
-                    ret.push(thread::spawn(move || {
-                        let out = Command::new("wc")
-                            .arg("-l").arg("-w")
-                            .arg(TFILE)
-                            .output().unwrap();
+        let mut threads: Vec<JoinHandle<()>> = Vec::with_capacity(3);
+        if let Some(counts) = &self.count && counts.len() > 0 {
+            // looping multiple times is irrelevant
+            // the longest this will ever be is 3 
+            let haslines = counts.contains(&"lines".to_string());
+            let haswords = counts.contains(&"words".to_string());
+            if counts.iter().any(|c| c.eq("lines") || c.eq("words")) {
+                let heap = Arc::clone(&heap);
+                threads.push(thread::spawn(move || {
+                    let out = Command::new("wc")
+                        .arg("-l").arg("-w")
+                        .arg(TFILE)
+                        .output();
 
-                        let b = String::from_utf8(out.stdout).unwrap();
-                        let outs: Vec<&str> = b
-                            .trim()
-                            .split_whitespace()
-                            .collect();
+                    if let Err(e) = out {
+                        eprintln!("{e}");
+                        return;
+                    }
 
-                        // 0 is lines, 1 is words
-                        let lines = outs.get(0).unwrap();
-                        let words = outs.get(1).unwrap();
-                        // only take lock once depending on combination
-                        if haslines && haswords {
-                            let linesout = CmdOutput::CountLines(lines.to_string());
-                            let wordsout = CmdOutput::CountWords(words.to_string());
-                            let mut heaplock = heap.lock().unwrap();
-                            heaplock.extend(vec![Reverse(linesout), Reverse(wordsout)]);
-                        } else if haslines {
-                            let linesout = CmdOutput::CountLines(lines.to_string());
-                            let mut heaplock = heap.lock().unwrap();
-                            heaplock.push(Reverse(linesout));
-                        } else {
-                            let wordsout = CmdOutput::CountWords(words.to_string());
-                            let mut heaplock = heap.lock().unwrap();
-                            heaplock.push(Reverse(wordsout));
-                        }
-                    }));
-                }
+                    let b = String::from_utf8(out.unwrap().stdout).unwrap();
+                    let outs: Vec<&str> = b
+                        .trim()
+                        .split_whitespace()
+                        .collect();
 
-                if counts.contains(&"blocks".to_string()) {
-                    let heap = Arc::clone(&heap);
-                    ret.push(thread::spawn(move || {
-                        let out = Command::new("stat")
-                            .arg("-c")
-                            .arg("%b")
-                            .arg(TFILE)
-                            .output().unwrap();
-                        let b = String::from_utf8(out.stdout).unwrap();
-                        let b = b.trim().to_string();
-                        let cmdout = CmdOutput::CountBlocks(b);
+                    // 0 is lines, 1 is words
+                    let lines = outs.get(0).unwrap();
+                    let words = outs.get(1).unwrap();
+                    // only take lock once depending on combination
+                    if haslines && haswords {
+                        let linesout = CmdOutput::CountLines(lines.to_string());
+                        let wordsout = CmdOutput::CountWords(words.to_string());
                         let mut heaplock = heap.lock().unwrap();
-                        heaplock.push(Reverse(cmdout));
-                    }));
-                }
+                        heaplock.extend(vec![Reverse(linesout), Reverse(wordsout)]);
+                    } else if haslines {
+                        let linesout = CmdOutput::CountLines(lines.to_string());
+                        let mut heaplock = heap.lock().unwrap();
+                        heaplock.push(Reverse(linesout));
+                    } else {
+                        let wordsout = CmdOutput::CountWords(words.to_string());
+                        let mut heaplock = heap.lock().unwrap();
+                        heaplock.push(Reverse(wordsout));
+                    }
+                }));
             }
+
+            counts.iter().for_each(|c| {
+                match c.as_str() {
+                    "lines" | "words" => {}
+                    "blocks" => {
+                        let heap = Arc::clone(&heap);
+                        threads.push(thread::spawn(move || {
+                            let out = Command::new("stat")
+                                .arg("-c")
+                                .arg("%b")
+                                .arg(TFILE)
+                                .output();
+                            if let Err(e) = out {
+                                eprintln!("{e}");
+                                return;
+                            }
+                            let b = String::from_utf8(out.unwrap().stdout).unwrap();
+                            let b = b.trim().to_string();
+                            let cmdout = CmdOutput::CountBlocks(b);
+                            let mut heaplock = heap.lock().unwrap();
+                            heaplock.push(Reverse(cmdout));
+                        }));
+                    }
+                    e => {
+                        eprintln!("Unrecognized option in \"counts\" field: {e}");
+                        eprintln!("Available options: words, lines, blocks");
+                    }
+                }
+            });
         }
-        ret
+        threads
     }
 
     fn handle_perms_meta_access(
         &self,
         heap: Arc<Mutex<BinaryHeap<Reverse<CmdOutput>>>>
     ) -> Vec<JoinHandle<()>> {
-        let mut ret: Vec<JoinHandle<()>> = vec![];
+        let mut threads: Vec<JoinHandle<()>> = vec![];
         let perms = self.permissions.clone().unwrap_or_default();
         let meta = self.metadata.clone().unwrap_or_default();
         let access = self.access.clone().unwrap_or_default();
         let opts = perms.into_iter().chain(meta).chain(access);
         let heap = Arc::clone(&heap);
 
-        ret.push(thread::spawn(move || {
+        threads.push(thread::spawn(move || {
             let out = Command::new("stat")
                 .arg("-c")
                 .arg("'%A|%U %u|%G %g|%D|%i|%h|%x|%y|%z|%w'")
                 .arg(TFILE)
-                .output()
-                .unwrap();
-            let b = String::from_utf8(out.stdout).unwrap();
+                .output();
+            if let Err(e) = out {
+                eprintln!("{e}");
+                return;
+            }
+            let b = String::from_utf8(out.unwrap().stdout).unwrap();
             let outs: Vec<&str> = b
                 .trim()
                 .trim_matches('\'')
                 .split('|')
                 .collect();
-            println!("{:#?}", outs);
 
             opts.into_iter().for_each(|p| {
                 match p.as_str() {
@@ -384,12 +424,17 @@ impl Include {
                         let mut heaplock = heap.lock().unwrap();
                         heaplock.push(Reverse(cmdout));
                     },
-                    _ => todo!()
+                    e => {
+                        eprintln!("Unrecognized option in config: {e}");
+                        eprintln!("Available \"permissions\" options: permissions, owner, group");
+                        eprintln!("Available \"metadata\" options: device, inode, links");
+                        eprintln!("Available \"access\" options: birth, read, modified, changed");
+                    }
                 }
             });
         }));
 
-        ret
+        threads
     }
 }
 
@@ -435,9 +480,9 @@ fn main() -> Result<()> {
 
     let mut heap = heap.lock().unwrap();
 
-    while let Some(v) = heap.pop() {
-        println!("{:?}", v.0);
-    }
+    // while let Some(v) = heap.pop() {
+    //     println!("{:?}", v.0);
+    // }
 
     Ok(())
 }
