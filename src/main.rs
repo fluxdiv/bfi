@@ -55,6 +55,27 @@ enum CmdOutput {
     AccessBirth(String)
 }
 
+// Helpers for converting bytes to others
+fn bytes_to_b(bytes: u64) -> String {
+    format!("{:.2} B", bytes as f64)
+}
+
+fn bytes_to_kb(bytes: u64) -> String {
+    format!("{:.2} KB", bytes as f64 / 1024.0)
+}
+
+fn bytes_to_mb(bytes: u64) -> String {
+    format!("{:.2} MB", bytes as f64 / 1024.0 / 1024.0)
+}
+
+fn bytes_to_gb(bytes: u64) -> String {
+    format!("{:.2} GB", bytes as f64 / 1024.0 / 1024.0 / 1024.0)
+}
+
+fn bytes_to_tb(bytes: u64) -> String {
+    format!("{:.2} TB", bytes as f64 / 1024.0 / 1024.0 / 1024.0 / 1024.0)
+}
+
 // shelling out to other tools here because
 // 1) they work
 // 2) they're mostly ubiquitous, with some missing cases handled
@@ -99,12 +120,84 @@ impl Include {
                             heaplock.push(Reverse(cmdout));
                         })
                     },
-                    _ => todo!()
+                    e => {
+                        eprintln!("Unrecognized option in \"general\" field: {e}");
+                        eprintln!("Available options: path, type");
+                        todo!()
+                    }
                 }
             }).collect();
             return threads;
         }
         vec![]
+    }
+
+
+    fn handle_size(
+        &self,
+        heap: Arc<Mutex<BinaryHeap<Reverse<CmdOutput>>>>
+    ) -> Vec<JoinHandle<()>> {
+        let mut ret: Vec<JoinHandle<()>> = vec![];
+
+        if let Some(sizes) = &self.size && sizes.len() > 0 {
+            let heap = Arc::clone(&heap);
+            let sizes = sizes.clone();
+            ret.push(thread::spawn(move || {
+                let out = Command::new("du")
+                    .arg("-sb")
+                    .arg(TFILE)
+                    .output().unwrap();
+                let b = String::from_utf8(out.stdout).unwrap();
+                let size_bytes = b
+                    .split_whitespace()
+                    .next()
+                    .unwrap()
+                    .to_string()
+                    .parse::<u64>()
+                    .unwrap();
+
+                sizes.iter().for_each(|s| {
+                    match s.to_ascii_uppercase().as_str() {
+                        "B" => {
+                            let mut heaplock = heap.lock().unwrap();
+                            heaplock.push(
+                                Reverse(CmdOutput::SizeB(bytes_to_b(size_bytes)))
+                            );
+                        }
+                        "KB" => {
+                            let mut heaplock = heap.lock().unwrap();
+                            heaplock.push(
+                                Reverse(CmdOutput::SizeKB(bytes_to_kb(size_bytes)))
+                            );
+                        }
+                        "MB" => {
+                            let mut heaplock = heap.lock().unwrap();
+                            heaplock.push(
+                                Reverse(CmdOutput::SizeMB(bytes_to_mb(size_bytes)))
+                            );
+                        }
+                        "GB" => {
+                            let mut heaplock = heap.lock().unwrap();
+                            heaplock.push(
+                                Reverse(CmdOutput::SizeGB(bytes_to_gb(size_bytes)))
+                            );
+                        }
+                        "TB" => {
+                            let mut heaplock = heap.lock().unwrap();
+                            heaplock.push(
+                                Reverse(CmdOutput::SizeTB(bytes_to_tb(size_bytes)))
+                            );
+                        }
+                        e => {
+                            eprintln!("Unrecognized input in \"sizes\" config field: {e}");
+                            eprintln!("Available sizes: B, KB, MB, GB, TB");
+                        }
+                    }
+                });
+            }));
+        }
+
+        ret
     }
 
     fn handle_count(
@@ -131,7 +224,6 @@ impl Include {
                             .trim()
                             .split_whitespace()
                             .collect();
-                        println!("{:#?}", outs);
 
                         // 0 is lines, 1 is words
                         let lines = outs.get(0).unwrap();
@@ -336,6 +428,8 @@ fn main() -> Result<()> {
         .extend(include.handle_perms_meta_access(Arc::clone(&heap)));
     threads
         .extend(include.handle_count(Arc::clone(&heap)));
+    threads
+        .extend(include.handle_size(Arc::clone(&heap)));
 
     threads.into_iter().for_each(|t| t.join().unwrap());
 
