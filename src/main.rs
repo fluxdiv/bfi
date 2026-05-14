@@ -1,6 +1,6 @@
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
-// use std::path::PathBuf;
+use std::fmt;
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -52,6 +52,41 @@ enum CmdOutput {
     AccessChanged(String),
     AccessBirth(String)
 }
+
+impl fmt::Display for CmdOutput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let pad_len = 15;
+
+        match self {
+            CmdOutput::GeneralPath(s) => write!(f, "{:<pad_len$}{}", "Path", s),
+            CmdOutput::GeneralType(s) => write!(f, "{:<pad_len$}{}", "Type", s),
+
+            CmdOutput::PermissionsPermissions(s) => write!(f, "{:<pad_len$}{}", "Permissions", s),
+            CmdOutput::PermissionsOwner(s) => write!(f, "{:<pad_len$}{}", "Owner", s),
+            CmdOutput::PermissionsGroup(s) => write!(f, "{:<pad_len$}{}", "Group", s),
+
+            CmdOutput::MetaDevice(s) => write!(f, "{:<pad_len$}{}", "Device", s),
+            CmdOutput::MetaInode(s) => write!(f, "{:<pad_len$}{}", "Inode", s),
+            CmdOutput::MetaLinks(s) => write!(f, "{:<pad_len$}{}", "Links", s),
+
+            CmdOutput::SizeB(s) => write!(f, "{:<pad_len$}{}", "Bytes", s),
+            CmdOutput::SizeKB(s) => write!(f, "{:<pad_len$}{}", "KB", s),
+            CmdOutput::SizeMB(s) => write!(f, "{:<pad_len$}{}", "MB", s),
+            CmdOutput::SizeGB(s) => write!(f, "{:<pad_len$}{}", "GB", s),
+            CmdOutput::SizeTB(s) => write!(f, "{:<pad_len$}{}", "TB", s),
+
+            CmdOutput::CountLines(s) => write!(f, "{:<pad_len$}{}", "Lines", s),
+            CmdOutput::CountWords(s) => write!(f, "{:<pad_len$}{}", "Words", s),
+            CmdOutput::CountBlocks(s) => write!(f, "{:<pad_len$}{}", "Blocks", s),
+
+            CmdOutput::AccessRead(s) => write!(f, "{:<pad_len$}{}", "Read", s),
+            CmdOutput::AccessModified(s) => write!(f, "{:<pad_len$}{}", "Modified", s),
+            CmdOutput::AccessChanged(s) => write!(f, "{:<pad_len$}{}", "Changed", s),
+            CmdOutput::AccessBirth(s) => write!(f, "{:<pad_len$}{}", "Birth", s),
+        }
+    }
+}
+
 
 // Helpers for converting bytes to others
 fn bytes_to_b(bytes: u64) -> String {
@@ -447,30 +482,52 @@ impl Include {
 
 fn main() -> Result<()> {
     let fpath = std::env::args().nth(1)
-        .ok_or_else(|| anyhow!("usage: bfi file_path.rs"))?;
+        .ok_or_else(|| anyhow!("\nusage: bfi file_path.rs\nusage: bfi file_path.rs --all"))?;
 
-    // /home/user/.config/bfi/config.json
-    let config = {
-        let mut config_path = dirs::config_dir()
-            .ok_or_else(|| {
-                anyhow!("Unable to locate home directory")
-            })?;
-        config_path.push("bfi/config.json");
-        Config::<JSON>::open(&config_path)
-            .map_err(|_e| anyhow!("Expecting json config at {:#?}", config_path))
+    let include = match std::env::args().nth(2).as_deref() {
+        Some(_a @ "--all") => {
+            let default_all = include_str!("../default_config.json");
+            let val: serde_json::Value = serde_json::from_str(default_all)
+                .map_err(|e| anyhow!("Invalid config.json structure: {e}"))?;
+            if !val.is_object() {
+                return Err(anyhow!("Invalid config.json structure"));
+            }
+            let Some(includes) = val.get("include") else {
+                return Err(anyhow!("Invalid config.json structure, missing \"includes\""));
+            };
+            let include: Include = serde_json::from_value(includes.to_owned())?;
+            Ok(include)
+        },
+        Some(_) => {
+            Err(anyhow!("\nusage: bfi file_path.rs\nusage: bfi file_path.rs --all"))
+        },
+        None => {
+            // /home/user/.config/bfi/config.json
+            let config = {
+                let mut config_path = dirs::config_dir()
+                    .ok_or_else(|| {
+                        anyhow!("Unable to locate home directory")
+                    })?;
+                config_path.push("bfi/config.json");
+                Config::<JSON>::open(&config_path)
+                    .map_err(|_e| anyhow!("Expecting json config at {:#?}", config_path))
+            }?;
+
+            let include_field = config.get(AppConfig::Include)
+                .ok_or_else(|| anyhow!("bfi config must include \"include\" field"))?;
+            include_field.only_one_key()?;
+
+            let include_inner: &serde_json::Value = include_field
+                .get_generic_inner()
+                .ok_or_else(|| anyhow!("bfi config \"include\" field must be valid json"))?;
+
+            let include: Include = Include::deserialize(include_inner)?;
+
+            Ok(include)
+        }
     }?;
 
-    let include_field = config.get(AppConfig::Include)
-        .ok_or_else(|| anyhow!("bfi config must include \"include\" field"))?;
-    include_field.only_one_key()?;
-
-    let include_inner: &serde_json::Value = include_field
-        .get_generic_inner()
-        .ok_or_else(|| anyhow!("bfi config \"include\" field must be valid json"))?;
-
-    let include: Include = Include::deserialize(include_inner)?;
-
-    let mut heap = Arc::new(
+    let heap = Arc::new(
         Mutex::new(BinaryHeap::<Reverse<CmdOutput>>::with_capacity(50))
     );
 
@@ -490,7 +547,7 @@ fn main() -> Result<()> {
     let mut heap = heap.lock().unwrap();
 
     while let Some(v) = heap.pop() {
-        println!("{:?}", v.0);
+        println!("{}", v.0);
     }
 
     Ok(())

@@ -1,0 +1,10 @@
+{
+  "include": {
+    "general": ["type", "path"],
+    "permissions": ["permissions", "owner", "group"],
+    "metadata": ["device", "inode", "links"],
+    "size": ["B", "KB", "MB", "GB", "TB"], 
+    "count": ["lines", "words", "blocks"],
+    "access": ["read", "modified", "changed", "birth"]
+  }
+}
