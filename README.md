@@ -1,5 +1,7 @@
 # [b]etter [f]ile [i]nfo
 
+![example_screenshot](assets/example.png)
+
 Print a configurable list of info about a file or directory
 
 Wrapper around (and thus requires):
@@ -9,15 +11,21 @@ Wrapper around (and thus requires):
 - wc
 - stat
 
-# Usage
+## Installation
 
-**Option 1**
+```
+cargo install bfi
+```
+
+## Usage
+
+**Option 1)**
 Use a default config that prints all information about a file:
 ```
 bfi some_file --all
 ```
 
-**Option 2**
+**Option 2)**
 Using a custom config file:
 ```
 bfi some_file
@@ -26,7 +34,7 @@ bfi some_file
 **Creating a custom config file:**
 - Create a config file at `/home/user/.config/bfi/config.json`
 - Ex config with all available options used:
-```
+```json
 {
   "include": {
     "general": ["type", "path"],
