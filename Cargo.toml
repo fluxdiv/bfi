@@ -3,6 +3,10 @@ name = "bfi"
 version = "0.1.0"
 edition = "2024"
 authors = ["fluxdiv <156196590+fluxdiv@users.noreply.github.com>"]
+license-file = "LICENSE"
+readme = "README.md"
+description = "Print a configurable list of info about a file or directory"
+repository = "https://github.com/lfuxdiv/bfi"
 
 [dependencies]
 anyhow = "1.0.102"
