@@ -1,0 +1,56 @@
+#!/usr/bin/env python3
+import re
+import sys
+import string
+
+TYPES = [
+    "feat", "fix", "chore", "docs", "style",
+    "refactor", "test", "perf", "ci", "build", "revert"
+]
+
+# Regex
+PATTERN = re.compile(
+    r'^(?P<type>[a-zA-Z]+)'       # type (letters only)
+    r'(?:\([^)]+\))?'             # optional scope
+    r'!?'                         # optional "!" after type/scope
+    r':\s+'                       # colon and spaces
+    r'(?P<desc>.+)$'              # description
+)
+
+def check_line(first_line: str) -> bool:
+    match = PATTERN.match(first_line)
+    if not match:
+        return fail(first_line, "Message must match format: type(optional_scope): description")
+
+    ctype = match.group("type").lower()
+    desc = match.group("desc")
+
+    if ctype not in TYPES:
+        return fail(first_line, f"Invalid type '{ctype}'. Allowed: {', '.join(TYPES)}")
+
+    if not desc or desc[0] in string.punctuation:
+        return fail(first_line, "Description can not be empty or start with punctuation.")
+
+    # passed all checks
+    return True
+
+def fail(msg, reason):
+    print("------------------------------")
+    print("ERROR:  Invalid commit message")
+    print(f"REASON: {reason}")
+    print("------------------------------")
+    print("Valid examples:")
+    print("   fix: fixed some bug")
+    print("   feat!: added feature with breaking changes")
+    print("   fix(parser): fixed problem with parser")
+    return False
+
+def main():
+    commit_msg_file = sys.argv[1]
+    with open(commit_msg_file, encoding="utf-8") as f:
+        first_line = f.readline().strip()
+    ok = check_line(first_line)
+    sys.exit(0 if ok else 1)
+
+if __name__ == "__main__":
+    main()
