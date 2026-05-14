@@ -1,6 +1,6 @@
 [package]
 name = "bfi"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 authors = ["fluxdiv <156196590+fluxdiv@users.noreply.github.com>"]
 license-file = "LICENSE"
